@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Block Vesting — GEN that streams by Ethereum block height</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171b21; --line:#262c35; --ink:#e6ebf2; --dim:#97a3b1;
+          --ok:#58d6a0; --bad:#ff6b6b; --acc:#6aa8ff; --warn:#e8c060; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:1080px; margin:0 auto; padding:0 20px 80px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:16px;
+           padding:22px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  h1 { font-size:21px; margin:0; letter-spacing:-.01em; }
+  .sub { color:var(--dim); font-size:13px; margin:2px 0 0; }
+  h2 { font-size:17px; margin:28px 0 12px; }
+  h3 { font-size:14px; margin:22px 0 8px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:18px 20px; margin:16px 0; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+  label { display:block; font-size:12px; color:var(--dim); margin-bottom:5px;
+          text-transform:uppercase; letter-spacing:.05em; }
+  input { width:100%; padding:9px 11px; background:#0b0e12; color:var(--ink);
+          border:1px solid var(--line); border-radius:7px; font-size:14px; }
+  input:focus { outline:none; border-color:var(--acc); }
+  button { cursor:pointer; border:1px solid var(--line); background:#1d2430; color:var(--ink);
+           padding:9px 16px; border-radius:7px; font-size:14px; }
+  button:hover { border-color:var(--acc); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .primary { background:var(--acc); color:#08122a; border-color:var(--acc); font-weight:600; }
+  .danger { background:transparent; border-color:var(--bad); color:var(--bad); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px; font-size:11px; font-weight:600; }
+  .p-OPEN { background:rgba(106,168,255,.16); color:var(--acc); }
+  .p-DONE { background:rgba(88,214,160,.16); color:var(--ok); }
+  .p-CANCELLED { background:rgba(255,107,107,.16); color:var(--bad); }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .dim { color:var(--dim); }
+  .warn { color:var(--warn); } .mono { font-family:"SF Mono",Consolas,monospace; font-size:12.5px;
+         word-break:break-all; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .bar { height:8px; border-radius:5px; background:#0b0e12; border:1px solid var(--line);
+         overflow:hidden; margin:10px 0 6px; }
+  .bar > i { display:block; height:100%; background:linear-gradient(90deg,var(--acc),var(--ok)); }
+  #toast { position:fixed; right:18px; bottom:18px; display:flex; flex-direction:column;
+           gap:9px; z-index:50; max-width:360px; }
+  .msg { padding:11px 14px; border-radius:8px; border:1px solid var(--line);
+         background:var(--panel); font-size:13.5px; }
+  .msg.error { border-color:var(--bad); } .msg.success { border-color:var(--ok); }
+  .spinner { display:inline-block; width:13px; height:13px; border:2px solid var(--line);
+             border-top-color:var(--acc); border-radius:50%; animation:spin .8s linear infinite;
+             vertical-align:-2px; margin-right:7px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .hint { font-size:12.5px; color:var(--dim); margin-top:8px; }
+  .clock { padding:10px 12px; border:1px solid var(--line); border-radius:8px;
+           background:#0b0e12; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div>
+    <h1>Block Vesting</h1>
+    <p class="sub">GEN that streams by Ethereum block height — released against a height both providers agree on</p>
+  </div>
+  <div class="row">
+    <span class="dim mono" id="wallet">read-only</span>
+    <button id="connectBtn">Connect wallet</button>
+  </div>
+</header>
+
+<div class="clock" style="margin-top:16px" id="clock">Reading both providers…</div>
+
+<div class="row" style="margin-top:16px">
+  <button id="tabNew" class="primary">New vesting</button>
+  <button id="tabList">Vestings</button>
+  <span class="dim">Every view is bound to a vesting id — nothing here reads a shared “latest” record.</span>
+</div>
+
+<section id="viewNew">
+  <h2>Escrow GEN that vests over a block range</h2>
+  <div class="card">
+    <div class="grid">
+      <div><label>Recipient (gets the GEN)</label><input id="f_rec" placeholder="0x…"></div>
+      <div><label>Amount (GEN)</label><input id="f_total" value="1"></div>
+      <div><label>First vested block</label><input id="f_start" placeholder="laggard + 30"></div>
+      <div><label>Last vested block</label><input id="f_end" placeholder="start + 1800"></div>
+    </div>
+    <p class="hint">GEN is escrowed in wei (18 decimals). Time is an Ethereum block height, never a
+      clock: the two providers below can disagree by blocks, so the contract always counts from the
+      <b>laggard</b>. Nothing vests at the first block; everything has vested at the last.</p>
+    <div class="row" style="margin-top:14px">
+      <button class="primary" id="createBtn">Open vesting</button>
+      <span class="hint">Funds move only when someone releases or cancels.</span>
+    </div>
+  </div>
+</section>
+
+<section id="viewList" hidden>
+  <h2>Vestings</h2>
+  <div class="card">
+    <div class="row" style="margin-bottom:12px">
+      <button id="refreshBtn">Refresh</button>
+      <span class="dim">Opened by id; there is no “latest vesting” anywhere in this page.</span>
+    </div>
+    <div id="listBody"><p class="dim">Loading…</p></div>
+  </div>
+
+  <div id="detailWrap" hidden>
+    <h2 id="detailTitle">Vesting</h2>
+    <div class="card">
+      <div id="detailBody"><p class="dim">Loading…</p></div>
+      <div class="row" style="margin-top:14px">
+        <button class="primary" id="releaseBtn">Release what has vested</button>
+        <button id="cancelBtn" class="danger">Cancel and return what has not</button>
+      </div>
+      <p class="hint" id="detailHint"></p>
+    </div>
+  </div>
+</section>
+
+<div id="toast"></div>
+</div>
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/genlayer-js@1.2.0/+esm";
+import {
+  formatGen, isFresh, normHeight, quote, toWei, tipRange, vested,
+} from "./units.mjs";
+
+const CONTRACT = "0x0000000000000000000000000000000000000000";
+const RPC = "https://rpc-asimov.genlayer.com";
+const PROVIDERS = [
+  { name: "publicnode", url: "https://ethereum-rpc.publicnode.com/" },
+  { name: "drpc", url: "https://eth.drpc.org/" },
+];
+
+const chainConfig = {
+  id: 4221, name: "Asimov Testnet",
+  nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
+  rpcUrls: { default: { http: [RPC] } }, testnet: true,
+};
+
+const $ = (id) => document.getElementById(id);
+const readClient = createClient({ chain: chainConfig });
+let writeClient = null;
+let selected = null;
+let live = { ok: false, laggard: 0, fresher: 0, apart: 0 };
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+function toast(text, kind) {
+  const m = el("div", "msg " + (kind || ""), text);
+  $("toast").appendChild(m);
+  setTimeout(() => m.remove(), 7000);
+}
+function busy(btn, on, label) {
+  btn.disabled = on;
+  if (on) {
+    btn.dataset.label = btn.dataset.label || btn.textContent;
+    btn.textContent = "";
+    btn.appendChild(el("span", "spinner"));
+    btn.appendChild(document.createTextNode(label || "Working…"));
+  } else if (btn.dataset.label) btn.textContent = btn.dataset.label;
+}
+function pill(s) { return el("span", "pill p-" + s, s); }
+function short(s, n) { s = String(s); return s.length > n ? s.slice(0, n) + "…" : s; }
+
+async function read(method, args) {
+  return await readClient.readContract({ address: CONTRACT, functionName: method, args });
+}
+async function connectWallet() {
+  if (!window.ethereum) throw new Error("Install a wallet such as MetaMask first");
+  await window.ethereum.request({ method: "eth_requestAccounts" });
+  const accounts = await window.ethereum.request({ method: "eth_accounts" });
+  const account = accounts[0];
+  writeClient = createClient({ chain: chainConfig, account, provider: window.ethereum });
+  await writeClient.connect("testnetAsimov");
+  $("wallet").textContent = account.slice(0, 6) + "…" + account.slice(-4);
+}
+async function write(method, args) {
+  if (!writeClient) await connectWallet();
+  return await writeClient.writeContract({ address: CONTRACT, functionName: method, args });
+}
+
+// ---- the clock: two providers, the laggard caps everything ----
+async function rpcCall(provider, method) {
+  const r = await fetch(provider.url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [] }),
+  });
+  const j = await r.json();
+  if (typeof j.result !== "string") throw new Error(provider.name + " returned no height");
+  return parseInt(j.result, 16);
+}
+async function refreshClock() {
+  const out = await Promise.allSettled(PROVIDERS.map((p) => rpcCall(p, "eth_blockNumber")));
+  const a = out[0].status === "fulfilled" ? out[0].value : 0;
+  const b = out[1].status === "fulfilled" ? out[1].value : 0;
+  live = tipRange(a, b);
+  const box = $("clock");
+  box.textContent = "";
+  if (!live.ok) {
+    box.appendChild(el("span", "bad", "Both providers must answer before anything can be released. "));
+    box.appendChild(el("span", "dim", `publicnode ${a || "down"} · drpc ${b || "down"}`));
+    return live;
+  }
+  box.appendChild(el("span", "dim", "publicnode "));
+  box.appendChild(el("span", "mono", a));
+  box.appendChild(el("span", "dim", "  ·  drpc "));
+  box.appendChild(el("span", "mono", b));
+  box.appendChild(el("span", live.apart > 0 ? "warn" : "ok",
+    `  (${live.apart} block${live.apart === 1 ? "" : "s"} apart)`));
+  box.appendChild(el("span", "dim", `  →  laggard `));
+  box.appendChild(el("span", "mono", live.laggard));
+  box.appendChild(el("span", "dim", " is the height the contract will accept. Any release height must be"));
+  box.appendChild(el("span", "dim", ` within 60 blocks behind it.`));
+  return live;
+}
+
+async function getVest(id) { return JSON.parse(await read("get_vest", [id])); }
+
+async function loadList() {
+  const body = $("listBody");
+  body.textContent = "";
+  try {
+    const count = Number(await read("get_vest_count", []));
+    if (count === 0) { body.appendChild(el("p", "dim", "No vestings yet.")); return; }
+    const table = el("table");
+    const head = el("tr");
+    for (const h of ["id", "recipient", "total", "released", "returned", "window", "status"]) {
+      head.appendChild(el("th", "", h));
+    }
+    table.appendChild(head);
+    for (let i = 0; i < count; i++) {
+      const d = await getVest("v" + i);
+      const tr = el("tr");
+      tr.style.cursor = "pointer";
+      tr.appendChild(el("td", "mono", d.vest_id));
+      tr.appendChild(el("td", "mono", short(d.recipient, 14)));
+      tr.appendChild(el("td", "", formatGen(d.total) + " GEN"));
+      tr.appendChild(el("td", "ok", formatGen(d.released)));
+      tr.appendChild(el("td", "warn", formatGen(d.returned)));
+      tr.appendChild(el("td", "dim", d.start_block + " → " + d.end_block));
+      const st = el("td"); st.appendChild(pill(d.status)); tr.appendChild(st);
+      tr.onclick = () => openDetail(d.vest_id);
+      table.appendChild(tr);
+    }
+    body.appendChild(table);
+  } catch (e) {
+    body.appendChild(el("p", "bad", "Could not read the chain: " + String(e).slice(0, 160)));
+  }
+}
+
+async function openDetail(id) {
+  selected = id;
+  $("detailWrap").hidden = false;
+  $("detailTitle").textContent = "Vesting " + id;
+  const body = $("detailBody");
+  body.textContent = "";
+  body.appendChild(el("p", "dim", "Loading…"));
+  try {
+    const d = await getVest(id);
+    body.textContent = "";
+    const meta = el("table");
+    const add = (k, v, cls) => {
+      const tr = el("tr");
+      tr.appendChild(el("th", "", k));
+      const td = el("td", cls || "");
+      if (String(v).startsWith("0x")) td.className = "mono";
+      td.textContent = v;
+      tr.appendChild(td);
+      meta.appendChild(tr);
+    };
+    const st = el("tr");
+    st.appendChild(el("th", "", "status"));
+    const c = el("td");
+    c.appendChild(pill(d.status));
+    c.appendChild(document.createTextNode("  " + (d.reason || "")));
+    st.appendChild(c);
+    meta.appendChild(st);
+    add("payer", d.payer);
+    add("recipient", d.recipient);
+    add("total", formatGen(d.total) + " GEN  (" + d.total + " wei)");
+    add("per block", formatGen(d.per_block, 9) + " GEN");
+    add("window", d.start_block + " → " + d.end_block +
+        "  (" + (d.end_block - d.start_block) + " blocks)");
+    add("released", formatGen(d.released) + " GEN");
+    add("returned", formatGen(d.returned) + " GEN");
+    add("still held", formatGen(d.held) + " GEN");
+    add("at height", String(d.height));
+    body.appendChild(meta);
+
+    if (d.status === "OPEN") {
+      body.appendChild(el("h3", "", "Live"));
+      const liveBox = el("div", "bar");
+      const fill = el("i");
+      liveBox.appendChild(fill);
+      body.appendChild(liveBox);
+      const note = el("p", "hint");
+      body.appendChild(note);
+      const paint = () => {
+        if (!live.ok) {
+          note.className = "bad";
+          note.textContent = "Both providers must answer before this can be released.";
+          return;
+        }
+        const v = vested(d.total, d.start_block, d.end_block, live.laggard);
+        const pct = d.total > 0 ? Number((v * 10000n) / BigInt(d.total)) / 100 : 0;
+        fill.style.width = Math.min(100, pct) + "%";
+        note.className = "hint";
+        note.textContent = `At the laggard height ${live.laggard}, ` +
+          `${formatGen(v)} GEN of ${formatGen(d.total)} GEN has vested ` +
+          `(${pct.toFixed(2)}%). Releasing now would pay ` +
+          `${formatGen(v - BigInt(d.released))} GEN to the recipient.`;
+      };
+      paint();
+      const timer = setInterval(() => { refreshClock().then(paint); }, 15000);
+      body.appendChild(el("p", "dim", "Refreshes every 15 s, straight from the two providers."));
+
+      $("detailHint").textContent =
+        `Release is permissionless: anyone may call it and the GEN goes to the recipient, ` +
+        `never to the caller. Cancel is payer-only and settles both sides at once.`;
+      $("detailBtnTimer") && clearInterval($("detailBtnTimer"));
+      window.__detailTimer = timer;
+    } else {
+      $("detailHint").textContent =
+        `Final. released + returned = ${formatGen(d.total)} GEN, and this vesting holds nothing.`;
+    }
+  } catch (e) {
+    body.textContent = "";
+    body.appendChild(el("p", "bad", "Could not read that vesting: " + String(e).slice(0, 160)));
+  }
+}
+
+async function doCreate() {
+  const btn = $("createBtn");
+  busy(btn, true, " Opening…");
+  try {
+    await refreshClock();
+    const start = normHeight($("f_start").value) ||
+      (live.ok ? String(live.laggard + 30) : "");
+    const end = normHeight($("f_end").value) || (start ? String(Number(start) + 1800) : "");
+    if (!start || !end) throw new Error("Give both block heights, or let both providers answer first");
+    await write("open_vest", [$("f_rec").value.trim(), start, end], toWei($("f_total").value));
+    toast(`Vesting opened: blocks ${start} → ${end}. It appears in the list once the transaction lands.`, "success");
+    showList();
+  } catch (e) {
+    toast(String(e).slice(0, 220), "error");
+  } finally { busy(btn, false); }
+}
+
+async function doRelease() {
+  if (!selected) return;
+  const btn = $("releaseBtn");
+  busy(btn, true, " Releasing…");
+  try {
+    await refreshClock();
+    if (!live.ok) throw new Error("Both providers must answer first");
+    const d = await getVest(selected);
+    const q = quote(d, live.laggard);
+    if (q.wouldRelease <= 0n) throw new Error("Nothing has vested since the last release");
+    await write("release", [selected, String(live.laggard)]);
+    toast(`Released ${formatGen(q.wouldRelease)} GEN to the recipient at height ${live.laggard}.`, "success");
+    await openDetail(selected);
+    await loadList();
+  } catch (e) {
+    toast(String(e).slice(0, 220), "error");
+  } finally { busy(btn, false); }
+}
+
+async function doCancel() {
+  if (!selected) return;
+  const btn = $("cancelBtn");
+  busy(btn, true, " Cancelling…");
+  try {
+    await refreshClock();
+    if (!live.ok) throw new Error("Both providers must answer first");
+    const d = await getVest(selected);
+    const q = quote(d, live.laggard);
+    await write("cancel", [selected, String(live.laggard)]);
+    toast(`Cancelled at ${live.laggard}: ${formatGen(q.wouldRelease)} GEN to the recipient, ` +
+      `${formatGen(q.wouldReturn)} GEN back to the payer.`, "success");
+    await openDetail(selected);
+    await loadList();
+  } catch (e) {
+    toast(String(e).slice(0, 220), "error");
+  } finally { busy(btn, false); }
+}
+
+function showNew() {
+  $("viewNew").hidden = false; $("viewList").hidden = true;
+  $("tabNew").classList.add("primary"); $("tabList").classList.remove("primary");
+}
+function showList() {
+  $("viewNew").hidden = true; $("viewList").hidden = false;
+  $("tabList").classList.add("primary"); $("tabNew").classList.remove("primary");
+  loadList();
+}
+
+$("tabNew").onclick = showNew;
+$("tabList").onclick = showList;
+$("refreshBtn").onclick = () => { refreshClock(); loadList(); };
+$("createBtn").onclick = doCreate;
+$("releaseBtn").onclick = doRelease;
+$("cancelBtn").onclick = doCancel;
+$("connectBtn").onclick = async () => {
+  const btn = $("connectBtn");
+  busy(btn, true, " Connecting…");
+  try { await connectWallet(); toast("Wallet connected", "success"); }
+  catch (e) { toast(String(e).slice(0, 220), "error"); }
+  finally { busy(btn, false); }
+};
+
+refreshClock();
+showNew();
+</script>
+</body>
+</html>
