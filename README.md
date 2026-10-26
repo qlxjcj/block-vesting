@@ -3,7 +3,12 @@
 **GEN that streams by Ethereum block height: released against a height that two
 independent providers agree on, never against a clock nobody can vote on.**
 
-Deployed on GenLayer Asimov: **(filled after the deploy)**
+Deployed on GenLayer Asimov: **`0x2A5b08ceDe80A88F2c18Fa30552c39B652810209`**
+([explorer](https://explorer-asimov.genlayer.com/address/0x2A5b08ceDe80A88F2c18Fa30552c39B652810209))
+
+App: https://qlxjcj.github.io/block-vesting/
+
+> Bradbury was reset to Phase 2 (chain id 4221) in October 2026, so this runs on Asimov.
 
 ---
 
@@ -118,6 +123,57 @@ with loading states and surfaced errors; DOM APIs only.
 **Bounds** — `total` > 0, `end_block > start_block > 0`, recipient is another
 0x address, `laggard - 60 <= height <= laggard`.
 
+## Live
+
+Verified on GenLayer Asimov against `0x2A5b08ceDe80A88F2c18Fa30552c39B652810209`. Every number
+below is read back from chain state with `get_vest`, not from receipts.
+
+### `v0` — a vesting that ran to the end
+
+| step | result |
+|---|---|
+| `open_vest` | **0.1 GEN**, window `[26275958, 26275988]` (30 blocks) |
+| `release` (partial) | confirmed inside the window |
+| `release` (final) | at height **26275990**, past the end |
+| state | `status` **DONE**, `released` **0.1 GEN**, `returned` 0, `held` **0** |
+
+```
+released 0.1 + returned 0 == total 0.1   ✓
+```
+
+### `v1` — cancelled mid-flight
+
+| field | value |
+|---|---|
+| window | `[26276043, 26276943]` (900 blocks) |
+| cancelled at height | **26276054** — 11 blocks into 900 |
+| `released` (to the recipient) | **0.001222222222222222 GEN** |
+| `returned` (to the payer) | **0.098777777777777778 GEN** |
+| `held` | **0** |
+
+The arithmetic is the contract's, and it checks out to the wei:
+
+```
+11 / 900 * 0.1 = 0.0012222222222222222…   →  1222222222222222 wei
+```
+
+Cancelling settled **both sides in one call** — the vested part to the
+recipient and the rest back to the payer — which is why `held` is 0 and
+`released + returned == total` holds for a cancelled vesting as well.
+
+### What the chain balance says
+
+Both vestings report `held == 0`, but the contract's **native balance is still
+0.2 GEN**, and the recipient's account never received the two payouts. `emit_transfer`
+is documented as emitting on `on='finalized'`, and on this network the emitted
+transfer does not reach the recipient's EVM balance — measured here and in two
+other contracts, several minutes after the writes reported `FINALIZED`.
+
+So: **the ledger settles exactly and that is what the tests and the views prove;
+the outbound native transfer is not reflected in balances on Asimov.** I am
+stating that rather than claiming the money moved, because the balance is the
+one thing I can actually check.
+
 ## Trust boundaries, stated plainly
 
 1. **The two providers are the oracle.** They are contract constants, but a
@@ -151,13 +207,9 @@ invariant.
 The fixtures in `tests/direct/conftest.py` use the real JSON-RPC envelope,
 including the error-in-`result` shape that public RPCs really do return.
 
-## Live
-
-**(filled after the deploy)**
-
 ## Source integrity
 
 ```
-sha256  (filled after the deploy)
-bytes   (filled after the deploy)
+sha256  96523cf814a3c2b19bcdee299e9b27557b3f69428a34ef2cf323e6f5dddaf848
+bytes   11233
 ```
